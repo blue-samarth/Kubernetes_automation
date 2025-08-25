@@ -47,7 +47,7 @@ deployment_print_status() {
 parse_arguments() {
     if [[ $# -lt 3 ]]; then
         deployment_print_status "ERROR" "Usage: k8s_func <provider> <resource_type> <deployment_stage>"
-        deployment_print_status "INFO" "Provider: eks/gcp/aks"
+        deployment_print_status "INFO" "Provider: aws/gcp/azure"
         deployment_print_status "INFO" "Resource Type: backend/frontend/load_test"
         deployment_print_status "INFO" "Deployment Stage: development/production/staging/monitoring"
         deployment_print_status "INFO" "Example: k8s_func gcp backend production"
@@ -60,11 +60,11 @@ parse_arguments() {
     
     # Validate provider
     case "$PROVIDER" in
-        eks|gcp|aks)
+        aws|gcp|azure)
             deployment_print_status "SUCCESS" "Provider: $PROVIDER"
             ;;
         *)
-            deployment_print_status "ERROR" "Invalid provider: $PROVIDER. Must be eks/gcp/aks"
+            deployment_print_status "ERROR" "Invalid provider: $PROVIDER. Must be aws/gcp/azure"
             return 1
             ;;
     esac
@@ -163,10 +163,10 @@ deployment_configure_container() {
             gcp)
                 docker_image="\${local.region}-docker.pkg.dev/\${local.name}/\${module.artifact_registory.project_id}/\${local.org_abbr}-${RESOURCE_TYPE}-${SERVICE_NAME}-service-${DEPLOYMENT_STAGE}:latest"
                 ;;
-            eks)
+            aws)
                 docker_image="\${data.aws_ecr_image.ecr_image_${RESOURCE_TYPE//-/_}_${SERVICE_NAME//-/_}_service_${DEPLOYMENT_STAGE}.image_uri}"
                 ;;
-            aks)
+            azure)
                 docker_image="\${data.azurerm_container_registry.acr_${RESOURCE_TYPE}_${SERVICE_NAME//-/_}_service_${DEPLOYMENT_STAGE}.login_server}/\${local.org_abbr}-${RESOURCE_TYPE}-${SERVICE_NAME}-service-${DEPLOYMENT_STAGE}:latest"
                 ;;
         esac
@@ -462,8 +462,8 @@ deployment_generate_terraform() {
 # Stage: ${deployment_stage}
 # Generated on: $(date)
 
-$(if [[ "$provider" == "eks" ]]; then generate_aws_ecr_data_block; fi)
-$(if [[ "$provider" == "aks" ]]; then generate_azure_container_registry_data_block; fi)
+$(if [[ "$provider" == "aws" ]]; then generate_aws_ecr_data_block; fi)
+$(if [[ "$provider" == "azure" ]]; then generate_azure_container_registry_data_block; fi)
 
 resource "kubernetes_deployment_v1" "deployment_${resource_type}_${service_name//-/_}_service_${deployment_stage}" {
   metadata {
@@ -499,7 +499,7 @@ resource "kubernetes_deployment_v1" "deployment_${resource_type}_${service_name/
       metadata {
         labels = {
           app                            = lower(join("-", [local.org_abbr, "${resource_type}", "${service_name}", "service", kubernetes_namespace_v1.namespace_${deployment_stage}.metadata[0].name]))
-          "app.kubernetes.io/managed-by" = "gcp-cloud-build-deploy"
+          "app.kubernetes.io/managed-by" = "${provider}-cloud-build-deploy"
           "app.kubernetes.io/name"       = lower(join("-", [local.org_abbr, "${resource_type}", "${service_name}", "service", kubernetes_namespace_v1.namespace_${deployment_stage}.metadata[0].name]))
           "app.kubernetes.io/component"  = "${resource_type}"
           "app.kubernetes.io/part-of"    = "/${local.org_abbr}-platform"
@@ -563,7 +563,7 @@ resource "kubernetes_deployment_v1" "deployment_${resource_type}_${service_name/
           security_context {
             allow_privilege_escalation = false
             privileged                 = false
-            read_only_root_filesystem  = false
+            read_only_root_filesystem  = true
             run_as_non_root            = true
 
             capabilities {
