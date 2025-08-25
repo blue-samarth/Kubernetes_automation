@@ -164,10 +164,10 @@ deployment_configure_container() {
                 docker_image="\${local.region}-docker.pkg.dev/\${local.name}/\${module.artifact_registory.project_id}/\${local.org_abbr}-${RESOURCE_TYPE}-${SERVICE_NAME}-service-${DEPLOYMENT_STAGE}:latest"
                 ;;
             eks)
-                docker_image="data.aws_ecr_image.ecr_image_${RESOURCE_TYPE}_${SERVICE_NAME//-/_}_service_${DEPLOYMENT_STAGE}.image_uri"
+                docker_image="\${data.aws_ecr_image.ecr_image_${RESOURCE_TYPE//-/_}_${SERVICE_NAME//-/_}_service_${DEPLOYMENT_STAGE}.image_uri}"
                 ;;
             aks)
-                docker_image="sgchessregistry.azurecr.io/sg-chs-${RESOURCE_TYPE}-${SERVICE_NAME}-service-${DEPLOYMENT_STAGE}:latest"
+                docker_image="\${data.azurerm_container_registry.acr_${RESOURCE_TYPE}_${SERVICE_NAME//-/_}_service_${DEPLOYMENT_STAGE}.login_server}/\${local.org_abbr}-${RESOURCE_TYPE}-${SERVICE_NAME}-service-${DEPLOYMENT_STAGE}:latest"
                 ;;
         esac
     fi
@@ -429,6 +429,20 @@ data "aws_ecr_image" "ecr_image_${resource_type}_${service_name//-/_}_service_${
 EOF
 }
 
+generate_azure_container_registry_data_block() {
+    local service_name="${DEPLOYMENT_CONFIG["service_name"]}"
+    local deployment_stage="${DEPLOYMENT_CONFIG["deployment_stage"]}"
+    local resource_type="${DEPLOYMENT_CONFIG["resource_type"]}"
+
+    cat << EOF
+# Azure Container Registry Data Source
+data "azurerm_container_registry" "acr_${resource_type}_${service_name//-/_}_service_${deployment_stage}" {
+  name                = lower(join("-", [local.org_abbr, "${resource_type}", "${service_name}", "service", kubernetes_namespace_v1.namespace_${deployment_stage}.metadata[0].name]))
+  resource_group_name = azurerm_resource_group.rg.name
+}
+EOF
+}
+
 # Function to generate the Terraform configuration
 deployment_generate_terraform() {
     local service_name="${DEPLOYMENT_CONFIG["service_name"]}"
@@ -448,15 +462,18 @@ deployment_generate_terraform() {
 # Stage: ${deployment_stage}
 # Generated on: $(date)
 
-$(if [[ "$provider" == "eks" ]]; then generate_aws_ecr_data_block; fi)resource "kubernetes_deployment_v1" "deployment_${resource_type}_${service_name//-/_}_service_${deployment_stage}" {
+$(if [[ "$provider" == "eks" ]]; then generate_aws_ecr_data_block; fi)
+$(if [[ "$provider" == "aks" ]]; then generate_azure_container_registry_data_block; fi)
+
+resource "kubernetes_deployment_v1" "deployment_${resource_type}_${service_name//-/_}_service_${deployment_stage}" {
   metadata {
     namespace = kubernetes_namespace_v1.namespace_${deployment_stage}.metadata[0].name
     name      = lower(join("-", [local.org_abbr, "${resource_type}", "${service_name}", "service", kubernetes_namespace_v1.namespace_${deployment_stage}.metadata[0].name]))
     labels = {
-      "app.kubernetes.io/managed-by" = "gcp-cloud-build-deploy"
+      "app.kubernetes.io/managed-by" = "${provider}-cloud-build-deploy"
       "app.kubernetes.io/name"       = lower(join("-", [local.org_abbr, "${resource_type}", "${service_name}", "service", kubernetes_namespace_v1.namespace_${deployment_stage}.metadata[0].name]))
       "app.kubernetes.io/component"  = "${resource_type}"
-      "app.kubernetes.io/part-of"    = "sg-chess-platform"
+      "app.kubernetes.io/part-of"    = "\${local.org_abbr}-platform"
     }
   }
 
@@ -485,7 +502,7 @@ $(if [[ "$provider" == "eks" ]]; then generate_aws_ecr_data_block; fi)resource "
           "app.kubernetes.io/managed-by" = "gcp-cloud-build-deploy"
           "app.kubernetes.io/name"       = lower(join("-", [local.org_abbr, "${resource_type}", "${service_name}", "service", kubernetes_namespace_v1.namespace_${deployment_stage}.metadata[0].name]))
           "app.kubernetes.io/component"  = "${resource_type}"
-          "app.kubernetes.io/part-of"    = "sg-chess-platform"
+          "app.kubernetes.io/part-of"    = "/${local.org_abbr}-platform"
         }
       }
 
@@ -547,7 +564,7 @@ $(if [[ "$provider" == "eks" ]]; then generate_aws_ecr_data_block; fi)resource "
             allow_privilege_escalation = false
             privileged                 = false
             read_only_root_filesystem  = false
-            run_as_non_root            = false
+            run_as_non_root            = true
 
             capabilities {
               add = []
@@ -559,7 +576,7 @@ $(if [[ "$provider" == "eks" ]]; then generate_aws_ecr_data_block; fi)resource "
         }
 
         security_context {
-          run_as_non_root     = false
+          run_as_non_root     = true
           supplemental_groups = []
 
           seccomp_profile {
@@ -582,9 +599,9 @@ resource "kubernetes_service_v1" "service_${resource_type}_${service_name//-/_}_
   metadata {
     name      = lower(join("-", [local.org_abbr, "${resource_type}", "${service_name}", "service", kubernetes_namespace_v1.namespace_${deployment_stage}.metadata[0].name]))
     namespace = kubernetes_namespace_v1.namespace_${deployment_stage}.metadata[0].name
-    annotations = {
-      "cloud.google.com/neg" = "{\\"ingress\\": true}"
-    }
+    annotations = ${provider == "gcp" ? {
+      "cloud.google.com/neg" = "{\"ingress\": true}"
+    } : {} }
   }
 
   spec {
@@ -739,8 +756,8 @@ deployment_show_summary() {
     echo
 }
 
-# Main deployment configuration function - k8s_func
-k8s_func() {
+# Main deployment configuration function - k8s_backend_func
+k8s_backend_func() {
     # Parse command line arguments
     if ! parse_arguments "$@"; then
         return 1
@@ -793,10 +810,10 @@ k8s_func() {
 
 # Legacy function name for backwards compatibility
 deployment_configuration_check() {
-    k8s_func "$@"
+    k8s_backend_func "$@"
 }
 
 # If script is run directly
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    k8s_func "$@"
+    k8s_backend_func "$@"
 fi
