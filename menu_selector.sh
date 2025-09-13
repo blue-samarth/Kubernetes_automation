@@ -88,7 +88,7 @@ function menu_selector() {
         fi
 
         # Handle selection and exit
-        if [[ $key == "" ]] || [[ $key == $'\n' ]] || [[ $key == $'\r' ]]; then
+        if [[ -z $key ]] || [[ $key == $'\n' ]] || [[ $key == $'\r' ]]; then
             break
         elif [[ $key == $'\003' ]] || [[ $key == "q" ]] || [[ $key == "Q" ]]; then
             tput cnorm 2>/dev/null
