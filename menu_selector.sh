@@ -119,6 +119,7 @@ function menu_selector() {
         if [[ $key == $esc ]]; then
             # Read the next 2 characters to get the full escape sequence
             read -s -n2 -t 0.1 key 2>/dev/null || key=""
+            [[ -z "$key" ]] && continue
             case "$key" in
                 "[A") # Up arrow: move to previous item (with wraparound)
                     (( cur-- ))
@@ -127,6 +128,8 @@ function menu_selector() {
                 "[B") # Down arrow: move to next item (with wraparound)
                     (( cur++ ))
                     (( cur >= count )) && (( cur = 0 ))
+                    ;;
+                   *) # Ignore other escape characters
                     ;;
             esac
         # Handle selection and exit keys
