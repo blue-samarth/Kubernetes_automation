@@ -101,54 +101,53 @@ function menu_selector() {
     
     # Main interactive loop
     while true; do
-        # Render menu: highlight current selection with green color and '>' indicator
+        # Render menu
         index=0 
         for o in "${display_options[@]}"; do
             if [[ "$index" == "$cur" ]]; then
-                echo -e " >\e[1;32m $o \e[0m"  # Selected: green + bold
+                echo -e " >\e[1;32m $o \e[0m"
             else 
-                echo "   $o"                     # Normal: plain text
+                echo "   $o"
             fi
             (( ++index ))
         done
-        
-        # Read single character without requiring Enter
+
+        # Read a single keypress
         read -s -n1 key
-        
-        # Handle escape sequences (arrow keys)
+
         if [[ $key == $esc ]]; then
-            # Read the next 2 characters to get the full escape sequence
-            read -s -n2 -t 0.1 key 2>/dev/null || key=""
-            [[ -z "$key" ]] && continue
-            case "$key" in
-                "[A") # Up arrow: move to previous item (with wraparound)
-                    (( cur-- ))
-                    (( cur < 0 )) && (( cur = count - 1 ))
-                    ;;
-                "[B") # Down arrow: move to next item (with wraparound)
-                    (( cur++ ))
-                    (( cur >= count )) && (( cur = 0 ))
-                    ;;
-                   *) # Ignore other escape characters
-                    ;;
-            esac
-        # Handle selection and exit keys
-        elif [[ $key == "" ]] || [[ $key == $'\n' ]] || [[ $key == $'\r' ]]; then
-            # Enter key: make selection
-            break
+            # Try to read the rest of the escape sequence (2 more chars)
+            if read -s -n2 -t 0.1 rest 2>/dev/null; then
+                case "$rest" in
+                    "[A") # Up arrow
+                        (( cur-- ))
+                        (( cur < 0 )) && (( cur = count - 1 ))
+                        ;;
+                    "[B") # Down arrow
+                        (( cur++ ))
+                        (( cur >= count )) && (( cur = 0 ))
+                        ;;
+                    *) ;;  # Ignore other escape sequences
+                esac
+            else
+                # ESC pressed alone, just ignore/redraw instead of exiting
+                continue
+            fi
+        elif [[ -z $key ]] || [[ $key == $'\n' ]] || [[ $key == $'\r' ]]; then
+            break   # Enter
         elif [[ $key == $'\003' ]] || [[ $key == "q" ]] || [[ $key == "Q" ]]; then
-            # Ctrl+C, q, or Q: cancel operation
             tput cnorm 2>/dev/null
             stty echo 2>/dev/null
             trap - EXIT INT TERM
             echo -en "\e[${count}A"
             echo -e "\nSelection cancelled" >&2
-            return 130  # Standard exit code for user interruption
+            return 130
         fi
-        
-        # Move cursor back to top of menu for next render
+
+        # Reset cursor for re-render
         echo -en "\e[${count}A"
     done
+
     
     # Terminal cleanup: restore cursor and echo
     tput cnorm 2>/dev/null   # Show cursor
