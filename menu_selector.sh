@@ -1,8 +1,9 @@
 #!/bin/bash
+
 #==============================================================================
 # INTERACTIVE MENU SELECTOR
 #==============================================================================
-# Terminal-based menu system with arrow key navigation, 
+# An advanced terminal-based menu system with arrow key navigation, 
 # customizable display text, and separate return values.
 #
 # Author: blue-Samarth
@@ -49,7 +50,7 @@ function menu_selector() {
     local -r prompt="$1" outvar="$2"
     local -a display_options=() return_values=()
     local parsing_display=true
-
+    
     # Parse arguments: display options, then "--", then return values
     # This allows flexible parameter passing for both display text and return values
     local i=3
@@ -59,7 +60,7 @@ function menu_selector() {
             (( i++ ))
             continue
         fi
-
+        
         if $parsing_display; then
             display_options+=("${!i}")
         else
@@ -89,7 +90,6 @@ function menu_selector() {
         echo "Error: No options provided" >&2
         return 1
     fi
-
     
     # Terminal setup: hide cursor and disable echo
     # This creates a clean interactive experience
@@ -98,59 +98,54 @@ function menu_selector() {
     stty -echo 2>/dev/null          # Disable terminal echo
     
     printf "$prompt\n"
-
-    # Main loop
+    
+    # Main interactive loop
     while true; do
-        # Clear previous menu lines if any
-        for ((i=0; i<count; i++)); do
-            echo -en "\e[1A\e[K"
-        done
-
-        # Render menu
+        # Render menu: highlight current selection with green color and '>' indicator
         index=0 
         for o in "${display_options[@]}"; do
             if [[ "$index" == "$cur" ]]; then
-                echo -e " >\e[1;32m $o \e[0m"
+                echo -e " >\e[1;32m $o \e[0m"  # Selected: green + bold
             else 
-                echo "   $o"
+                echo "   $o"                     # Normal: plain text
             fi
+            (( ++index ))
         done
-        # Read single character
-
+        
+        # Read single character without requiring Enter
         read -s -n1 key
-
+        
+        # Handle escape sequences (arrow keys)
         if [[ $key == $esc ]]; then
-            # Try to read the rest of the escape sequence (2 more chars)
-            if read -s -n2 -t 0.1 rest 2>/dev/null; then
-                case "$rest" in
-                    "[A") # Up arrow
-                        (( cur-- ))
-                        (( cur < 0 )) && (( cur = count - 1 ))
-                        ;;
-                    "[B") # Down arrow
-                        (( cur++ ))
-                        (( cur >= count )) && (( cur = 0 ))
-                        ;;
-                    *) ;;  # Ignore other escape sequences
-                esac
-            else
-                # ESC pressed alone, just ignore/redraw instead of exiting
-                continue
-            fi
-        elif [[ -z $key ]] || [[ $key == $'\n' ]] || [[ $key == $'\r' ]]; then
-            break   # Enter
+            # Read the next 2 characters to get the full escape sequence
+            read -s -n2 -t 0.1 key 2>/dev/null || key=""
+            case "$key" in
+                "[A") # Up arrow: move to previous item (with wraparound)
+                    (( cur-- ))
+                    (( cur < 0 )) && (( cur = count - 1 ))
+                    ;;
+                "[B") # Down arrow: move to next item (with wraparound)
+                    (( cur++ ))
+                    (( cur >= count )) && (( cur = 0 ))
+                    ;;
+            esac
+        # Handle selection and exit keys
+        elif [[ $key == "" ]] || [[ $key == $'\n' ]] || [[ $key == $'\r' ]]; then
+            # Enter key: make selection
+            break
         elif [[ $key == $'\003' ]] || [[ $key == "q" ]] || [[ $key == "Q" ]]; then
-            tput cnorm
-            stty echo
+            # Ctrl+C, q, or Q: cancel operation
+            tput cnorm 2>/dev/null
+            stty echo 2>/dev/null
             trap - EXIT INT TERM
+            echo -en "\e[${count}A"
             echo -e "\nSelection cancelled" >&2
-            return 130
+            return 130  # Standard exit code for user interruption
         fi
-
-        # Reset cursor for re-render
+        
+        # Move cursor back to top of menu for next render
         echo -en "\e[${count}A"
     done
-
     
     # Terminal cleanup: restore cursor and echo
     tput cnorm 2>/dev/null   # Show cursor
