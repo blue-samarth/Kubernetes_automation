@@ -1,9 +1,8 @@
 #!/bin/bash
-
 #==============================================================================
 # INTERACTIVE MENU SELECTOR
 #==============================================================================
-# An advanced terminal-based menu system with arrow key navigation, 
+# Terminal-based menu system with arrow key navigation, 
 # customizable display text, and separate return values.
 #
 # Author: blue-Samarth
@@ -15,7 +14,7 @@ function menu_selector() {
     local -r prompt="$1" outvar="$2"
     local -a display_options=() return_values=()
     local parsing_display=true
-    
+
     # Parse arguments: display options, then "--", then return values
     local i=3
     while (( i <= $# )); do
@@ -24,6 +23,7 @@ function menu_selector() {
             (( i++ ))
             continue
         fi
+
         if $parsing_display; then
             display_options+=("${!i}")
         else
@@ -31,94 +31,85 @@ function menu_selector() {
         fi
         (( i++ ))
     done
-    
-    # Use display options as return values if none provided
+
+    # If no return values specified, use display options
     if (( ${#return_values[@]} == 0 )); then
         return_values=("${display_options[@]}")
     fi
-    
-    # Validate array lengths
+
+    # Validate arrays
     if (( ${#display_options[@]} != ${#return_values[@]} )); then
         echo "Error: Mismatched display and return value arrays" >&2
         return 1
     fi
-    
-    local cur=0 count=${#display_options[@]} index=0
-    local esc=$(echo -en "\e")
-    
+
+    local cur=0 count=${#display_options[@]}
+    local esc=$(echo -en "\e") # ESC character
+
     if (( count == 0 )); then
         echo "Error: No options provided" >&2
         return 1
     fi
-    
+
     # Terminal setup
     tput civis 2>/dev/null
     trap 'tput cnorm 2>/dev/null; stty echo 2>/dev/null' EXIT INT TERM
     stty -echo 2>/dev/null
+
     printf "$prompt\n"
-    
-    # Main interactive loop
+
+    # Main loop
     while true; do
-        # Render menu
-        index=0
-        for o in "${display_options[@]}"; do
-            if [[ "$index" == "$cur" ]]; then
-                echo -e " >\e[1;32m $o \e[0m"
-            else
-                echo "   $o"
-            fi
-            (( ++index ))
+        # Clear previous menu lines if any
+        for ((i=0; i<count; i++)); do
+            echo -en "\e[1A\e[K"
         done
 
-        # Read single character from terminal
-        if ! read -s -n1 -r key </dev/tty; then
-            echo "Error: Could not read from terminal" >&2
-            return 1
-        fi
+        # Render menu
+        for i in "${!display_options[@]}"; do
+            if [[ $i -eq $cur ]]; then
+                echo -e " >\e[1;32m ${display_options[$i]} \e[0m"
+            else
+                echo "   ${display_options[$i]}"
+            fi
+        done
+
+        # Read single character
+        read -s -n1 key
 
         # Handle arrow keys
         if [[ $key == $esc ]]; then
-            if read -s -n2 -t 0.1 rest </dev/tty; then
-                case "$rest" in
-                    "[A") (( cur-- )); (( cur < 0 )) && (( cur = count - 1 )) ;;
-                    "[B") (( cur++ )); (( cur >= count )) && (( cur = 0 )) ;;
-                esac
-            fi
-            continue
-        fi
-
-        # Handle selection and exit
-        if [[ -z $key ]] || [[ $key == $'\n' ]] || [[ $key == $'\r' ]]; then
+            read -s -n2 -t 0.1 key 2>/dev/null || key=""
+            case "$key" in
+                "[A") ((cur--)); ((cur < 0)) && ((cur = count - 1)) ;;
+                "[B") ((cur++)); ((cur >= count)) && ((cur = 0)) ;;
+                *) ;; # ignore other escape sequences
+            esac
+        elif [[ -z $key ]] || [[ $key == $'\n' ]] || [[ $key == $'\r' ]]; then
             break
         elif [[ $key == $'\003' ]] || [[ $key == "q" ]] || [[ $key == "Q" ]]; then
-            tput cnorm 2>/dev/null
-            stty echo 2>/dev/null
+            tput cnorm
+            stty echo
             trap - EXIT INT TERM
-            echo -en "\e[${count}A"
             echo -e "\nSelection cancelled" >&2
             return 130
         fi
-
-        # Move cursor back to top
-        echo -en "\e[${count}A"
     done
-    
-    # Terminal cleanup
-    tput cnorm 2>/dev/null
-    stty echo 2>/dev/null
+
+    # Cleanup
+    tput cnorm
+    stty echo
     trap - EXIT INT TERM
 
-    # Clear menu
-    echo -en "\e[${count}A"
-    for (( i=0; i<count; i++ )); do
-        echo -e "\e[K"
+    # Clear menu from screen
+    for ((i=0; i<count; i++)); do
+        echo -en "\e[1A\e[K"
     done
-    echo -en "\e[${count}A"
 
     # Set output variable
     printf -v "$outvar" "${return_values[$cur]}"
-    
-    # Confirmation
+
+    # Display confirmation
     echo "Selected: ${display_options[$cur]} (value: ${return_values[$cur]})"
     return 0
 }
