@@ -1,9 +1,8 @@
 #!/bin/bash
-
 #==============================================================================
 # INTERACTIVE MENU SELECTOR
 #==============================================================================
-# An advanced terminal-based menu system with arrow key navigation, 
+# Terminal-based menu system with arrow key navigation, 
 # customizable display text, and separate return values.
 #
 # Author: blue-Samarth
@@ -50,7 +49,7 @@ function menu_selector() {
     local -r prompt="$1" outvar="$2"
     local -a display_options=() return_values=()
     local parsing_display=true
-    
+
     # Parse arguments: display options, then "--", then return values
     # This allows flexible parameter passing for both display text and return values
     local i=3
@@ -60,7 +59,7 @@ function menu_selector() {
             (( i++ ))
             continue
         fi
-        
+
         if $parsing_display; then
             display_options+=("${!i}")
         else
@@ -90,6 +89,7 @@ function menu_selector() {
         echo "Error: No options provided" >&2
         return 1
     fi
+
     
     # Terminal setup: hide cursor and disable echo
     # This creates a clean interactive experience
@@ -98,9 +98,14 @@ function menu_selector() {
     stty -echo 2>/dev/null          # Disable terminal echo
     
     printf "$prompt\n"
-    
-    # Main interactive loop
+
+    # Main loop
     while true; do
+        # Clear previous menu lines if any
+        for ((i=0; i<count; i++)); do
+            echo -en "\e[1A\e[K"
+        done
+
         # Render menu
         index=0 
         for o in "${display_options[@]}"; do
@@ -109,10 +114,9 @@ function menu_selector() {
             else 
                 echo "   $o"
             fi
-            (( ++index ))
         done
+        # Read single character
 
-        # Read a single keypress
         read -s -n1 key
 
         if [[ $key == $esc ]]; then
@@ -136,10 +140,9 @@ function menu_selector() {
         elif [[ -z $key ]] || [[ $key == $'\n' ]] || [[ $key == $'\r' ]]; then
             break   # Enter
         elif [[ $key == $'\003' ]] || [[ $key == "q" ]] || [[ $key == "Q" ]]; then
-            tput cnorm 2>/dev/null
-            stty echo 2>/dev/null
+            tput cnorm
+            stty echo
             trap - EXIT INT TERM
-            echo -en "\e[${count}A"
             echo -e "\nSelection cancelled" >&2
             return 130
         fi
