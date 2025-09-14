@@ -1,13 +1,14 @@
 #!/bin/bash
 
 #==============================================================================
-# UNIVERSAL MENU SELECTOR - Cross-Platform Compatible
+# UNIVERSAL MENU SELECTOR - Complete with WSL Color Fix
 #==============================================================================
 # Automatically detects terminal capabilities and chooses the best approach
 # Works on: macOS Terminal, iTerm2, WSL, Linux terminals, Git Bash, etc.
+# FIXED: Proper color handling for WSL
 #
 # Author: blue-Samarth
-# Version: 3.0 - Universal Compatibility
+# Version: 3.4 - Universal with WSL Color Fix
 # License: MIT
 #==============================================================================
 
@@ -69,7 +70,7 @@ detect_terminal_capabilities() {
 }
 
 #------------------------------------------------------------------------------
-# Color and Formatting Setup
+# Enhanced Color and Formatting Setup (WSL Fixed)
 #------------------------------------------------------------------------------
 
 setup_colors() {
@@ -96,8 +97,8 @@ setup_colors() {
         return 0
     fi
     
-    # Fallback to ANSI codes for compatible terminals
-    if [[ $capabilities == *"ansi"* ]] && [[ $capabilities != *"apple_terminal"* ]]; then
+    # Enhanced ANSI fallback for WSL and other terminals
+    if [[ $capabilities == *"ansi"* ]] || [[ $capabilities == *"wsl"* ]] || [[ $TERM == *"color"* ]] || [[ $COLORTERM == "truecolor" ]]; then
         RED='\033[0;31m'
         GREEN='\033[0;32m'
         YELLOW='\033[0;33m'
@@ -127,7 +128,7 @@ cursor_up() {
     
     if [[ $capabilities == *"cursor_movement"* ]]; then
         tput cuu "$lines" 2>/dev/null
-    elif [[ $capabilities == *"ansi"* ]] && [[ $capabilities != *"apple_terminal"* ]]; then
+    elif [[ $capabilities == *"ansi"* ]] || [[ $capabilities == *"wsl"* ]]; then
         printf '\033[%dA' "$lines"
     fi
 }
@@ -137,7 +138,7 @@ cursor_clear_line() {
     
     if [[ $capabilities == *"cursor_movement"* ]]; then
         tput el 2>/dev/null
-    elif [[ $capabilities == *"ansi"* ]] && [[ $capabilities != *"apple_terminal"* ]]; then
+    elif [[ $capabilities == *"ansi"* ]] || [[ $capabilities == *"wsl"* ]]; then
         printf '\033[K'
     fi
 }
@@ -147,7 +148,7 @@ hide_cursor() {
     
     if [[ $capabilities == *"cursor_movement"* ]]; then
         tput civis 2>/dev/null
-    elif [[ $capabilities == *"ansi"* ]] && [[ $capabilities != *"apple_terminal"* ]]; then
+    elif [[ $capabilities == *"ansi"* ]] || [[ $capabilities == *"wsl"* ]]; then
         printf '\033[?25l'
     fi
 }
@@ -157,7 +158,7 @@ show_cursor() {
     
     if [[ $capabilities == *"cursor_movement"* ]]; then
         tput cnorm 2>/dev/null
-    elif [[ $capabilities == *"ansi"* ]] && [[ $capabilities != *"apple_terminal"* ]]; then
+    elif [[ $capabilities == *"ansi"* ]] || [[ $capabilities == *"wsl"* ]]; then
         printf '\033[?25h'
     fi
 }
@@ -166,21 +167,19 @@ show_cursor() {
 # Advanced Menu (for capable terminals)
 #------------------------------------------------------------------------------
 
-advanced_menu_selector() {
-    local prompt="$1" outvar="$2" capabilities="$3"
-    shift 3
-    
+function advanced_menu_selector() {
+    local -r prompt="$1" outvar="$2"
+    shift 2
     local -a display_options=() return_values=()
     local parsing_display=true
-    
-    # Parse arguments
-    while (( $# > 0 )); do
+
+    # Parse options and values
+    while [[ $# -gt 0 ]]; do
         if [[ "$1" == "--" ]]; then
             parsing_display=false
             shift
             continue
         fi
-        
         if $parsing_display; then
             display_options+=("$1")
         else
@@ -188,71 +187,81 @@ advanced_menu_selector() {
         fi
         shift
     done
-    
+
+    # Fallback: use display options if no return values given
     if (( ${#return_values[@]} == 0 )); then
         return_values=("${display_options[@]}")
     fi
-    
-    local cur=0 count=${#display_options[@]}
-    local esc=$'\033'
-    
-    hide_cursor "$capabilities"
-    trap 'show_cursor "$capabilities"; stty echo 2>/dev/null' EXIT INT TERM
+
+    local count=${#display_options[@]}
+    if (( count == 0 )); then
+        echo "Error: No options provided" >&2
+        return 1
+    fi
+    if (( ${#display_options[@]} != ${#return_values[@]} )); then
+        echo "Error: Mismatched display and return value arrays" >&2
+        return 1
+    fi
+
+    # Setup
+    local cur=0 esc=$(echo -en "\e")
+    tput civis 2>/dev/null
+    trap 'tput cnorm 2>/dev/null; stty echo 2>/dev/null' EXIT INT TERM
     stty -echo 2>/dev/null
-    
+
     printf "%s\n" "$prompt"
-    
+
+    # Main loop (flicker-free: overwrite only, no clears here)
     while true; do
-        # Render menu
-        for (( i=0; i<count; i++ )); do
-            if (( i == cur )); then
-                printf " >%s %s %s\n" "$GREEN$BOLD" "${display_options[i]}" "$RESET"
+        local index=0
+        for o in "${display_options[@]}"; do
+            if [[ $index == $cur ]]; then
+                # Selected: green highlight
+                echo -e " >\e[1;32m $o \e[0m"
             else
-                printf "   %s\n" "${display_options[i]}"
+                echo "   $o"
             fi
+            (( ++index ))
         done
-        
-        # Read key
-        read -rsn1 key 2>/dev/null
-        
-        # Handle escape sequences
-        if [[ $key == "$esc" ]]; then
-            read -rsn2 -t 0.1 key 2>/dev/null
-            case $key in
-                '[A') (( cur-- )); (( cur < 0 )) && cur=$((count - 1)) ;;
-                '[B') (( cur++ )); (( cur >= count )) && cur=0 ;;
+
+        # Read input
+        read -s -n1 key
+        if [[ $key == $esc ]]; then
+            read -s -n2 -t 0.1 key 2>/dev/null || key=""
+            case "$key" in
+                "[A") (( cur = (cur - 1 + count) % count )) ;; # Up
+                "[B") (( cur = (cur + 1) % count )) ;;         # Down
             esac
-        elif [[ $key == '' ]] || [[ $key == $'\n' ]] || [[ $key == $'\r' ]]; then
+        elif [[ $key == "" || $key == $'\n' || $key == $'\r' ]]; then
             break
-        elif [[ $key == $'\003' ]] || [[ $key == 'q' ]] || [[ $key == 'Q' ]]; then
-            show_cursor "$capabilities"
-            stty echo 2>/dev/null
-            trap - EXIT INT TERM
-            echo "Selection cancelled" >&2
+        elif [[ $key == $'\003' || $key == "q" || $key == "Q" ]]; then
+            tput cnorm 2>/dev/null; stty echo 2>/dev/null; trap - EXIT INT TERM
+            echo -en "\e[${count}A"
+            echo -e "\nSelection cancelled" >&2
             return 130
         fi
-        
-        # Move cursor back up
-        cursor_up "$count" "$capabilities"
+
+        # Just move back up — overwrite next frame
+        echo -en "\e[${count}A"
     done
-    
+
     # Cleanup
-    show_cursor "$capabilities"
+    tput cnorm 2>/dev/null
     stty echo 2>/dev/null
     trap - EXIT INT TERM
-    
-    # Clear menu
-    cursor_up "$count" "$capabilities"
-    for (( i=0; i<count; i++ )); do
-        cursor_clear_line "$capabilities"
-        printf "\n"
-    done
-    cursor_up "$count" "$capabilities"
-    
-    printf -v "$outvar" "%s" "${return_values[$cur]}"
-    printf "Selected: %s\n" "${display_options[$cur]}"
+
+    # Clear menu after selection
+    echo -en "\e[${count}A"
+    for (( i=0; i<count; i++ )); do echo -e "\e[K"; done
+    echo -en "\e[${count}A"
+
+    # Output selection
+    printf -v "$outvar" "${return_values[$cur]}"
+    echo "Selected: ${display_options[$cur]} (value: ${return_values[$cur]})"
+
     return 0
 }
+
 
 #------------------------------------------------------------------------------
 # Simple Menu (for basic terminals)
@@ -293,13 +302,13 @@ simple_menu_selector() {
         
         for (( i=0; i<count; i++ )); do
             if (( i == cur )); then
-                printf " >> %s <<\n" "${display_options[i]}"
+                printf " %s>>%s %s %s<<%s\n" "$BOLD$GREEN" "$RESET" "${display_options[i]}" "$BOLD$GREEN" "$RESET"
             else
                 printf "    %s\n" "${display_options[i]}"
             fi
         done
         
-        printf "\nUse w/s or arrow keys to move, Enter to select, q to quit\n"
+        printf "\n%sUse w/s or arrow keys to move, Enter to select, q to quit%s\n" "$CYAN" "$RESET"
         
         read -rsn1 key 2>/dev/null
         
@@ -363,7 +372,7 @@ numbered_menu_selector() {
     
     printf "%s\n\n" "$prompt"
     for (( i=0; i<count; i++ )); do
-        printf "%d. %s\n" "$((i + 1))" "${display_options[i]}"
+        printf "%s%d.%s %s\n" "$BOLD" "$((i + 1))" "$RESET" "${display_options[i]}"
     done
     printf "\n"
     
@@ -377,7 +386,7 @@ numbered_menu_selector() {
                 return 130
                 ;;
             ''|*[!0-9]*)
-                printf "Invalid input. Please enter a number between 1 and %d.\n" "$count"
+                printf "%sInvalid input. Please enter a number between 1 and %d.%s\n" "$YELLOW" "$count" "$RESET"
                 continue
                 ;;
             *)
@@ -387,40 +396,145 @@ numbered_menu_selector() {
                     printf "Selected: %s\n" "${display_options[$selected_index]}"
                     return 0
                 else
-                    printf "Invalid choice. Please enter a number between 1 and %d.\n" "$count"
+                    printf "%sInvalid choice. Please enter a number between 1 and %d.%s\n" "$YELLOW" "$count" "$RESET"
                 fi
                 ;;
         esac
     done
 }
 
+// ...existing code...
+
 #------------------------------------------------------------------------------
-# Main Universal Menu Function
+# macOS Terminal Optimized Menu (with proper color support)
+#------------------------------------------------------------------------------
+
+macos_menu_selector() {
+    local prompt="$1" outvar="$2"
+    shift 2
+    
+    local -a display_options=() return_values=()
+    local parsing_display=true
+    
+    # Parse arguments
+    while (( $# > 0 )); do
+        if [[ "$1" == "--" ]]; then
+            parsing_display=false
+            shift
+            continue
+        fi
+        
+        if $parsing_display; then
+            display_options+=("$1")
+        else
+            return_values+=("$1")
+        fi
+        shift
+    done
+    
+    if (( ${#return_values[@]} == 0 )); then
+        return_values=("${display_options[@]}")
+    fi
+    
+    local cur=0 count=${#display_options[@]}
+    
+    # Force color setup for macOS Terminal using ANSI codes
+    local GREEN='\033[0;32m'
+    local CYAN='\033[0;36m'
+    local BOLD='\033[1m'
+    local RESET='\033[0m'
+    local YELLOW='\033[0;33m'
+    
+    while true; do
+        clear
+        printf "%s\n\n" "$prompt"
+        
+        for (( i=0; i<count; i++ )); do
+            if (( i == cur )); then
+                printf " ${BOLD}${GREEN}>> %s <<${RESET}\n" "${display_options[i]}"
+            else
+                printf "   %s\n" "${display_options[i]}"
+            fi
+        done
+        
+        printf "\n${CYAN}Use ↑/↓ arrow keys or w/s to move, Enter to select, q to quit${RESET}\n"
+        
+        read -rsn1 key 2>/dev/null
+        
+        # Debug: uncomment this line to see what keys are being detected
+        # printf "\nDEBUG: First key: '%s' (hex: %s)\n" "$key" "$(printf '%s' "$key" | xxd -p)" >&2; read -p "Press enter to continue..."
+        
+        case $key in
+            $'\033') # Arrow keys (ESC sequence)
+                read -rsn2 -t 0.1 key2 2>/dev/null
+                # printf "\nDEBUG: Arrow sequence: '%s'\n" "$key2" >&2; read -p "Press enter to continue..."
+                case $key2 in
+                    '[A') (( cur-- )); (( cur < 0 )) && cur=$((count - 1)) ;;
+                    '[B') (( cur++ )); (( cur >= count )) && cur=0 ;;
+                    '[C') ;; # Right arrow - ignore
+                    '[D') ;; # Left arrow - ignore
+                esac
+                ;;
+            # Alternative single-character arrow detection for some terminals
+            A) (( cur-- )); (( cur < 0 )) && cur=$((count - 1)) ;;
+            B) (( cur++ )); (( cur >= count )) && cur=0 ;;
+            # WASD keys
+            w|W) (( cur-- )); (( cur < 0 )) && cur=$((count - 1)) ;;
+            s|S) (( cur++ )); (( cur >= count )) && cur=0 ;;
+            # Enter/Return
+            ''|$'\n'|$'\r') break ;;
+            # Quit
+            q|Q|$'\003')
+                clear
+                echo "Selection cancelled"
+                return 130
+                ;;
+        esac
+    done
+    
+    clear
+    printf -v "$outvar" "%s" "${return_values[$cur]}"
+    printf "${GREEN}Selected: %s${RESET}\n" "${display_options[$cur]}"
+    return 0
+}
+
+
+#------------------------------------------------------------------------------
+# Main Universal Menu Function (Fixed Logic)
 #------------------------------------------------------------------------------
 
 menu_selector() {
     # Detect capabilities once
     local capabilities
     capabilities=$(detect_terminal_capabilities)
-    
+
     # Setup colors based on capabilities
-    setup_colors "$capabilities"
-    
-    # Choose the best menu implementation based on terminal capabilities
-    if [[ $capabilities == *"cursor_movement"* ]] && [[ $capabilities == *"read_timeout"* ]] && [[ $capabilities != *"apple_terminal"* ]]; then
-        # Full-featured menu for capable terminals (WSL, Linux, iTerm2)
-        advanced_menu_selector "$@" "$capabilities"
+    setup_colors "$capabilities"ß
+
+    # Menu selection logic
+    if [[ $capabilities == *"wsl"* ]]; then
+        # WSL: prefer advanced (flicker-free now), but allow override
+        if [[ -n "$FORCE_SIMPLE_MENU" ]]; then
+            simple_menu_selector "$@"
+        else
+            advanced_menu_selector "$@"
+        fi
+    elif [[ $capabilities == *"macos"* ]] && [[ $capabilities == *"apple_terminal"* ]]; then
+        # macOS Terminal: use optimized selector with forced colors
+        macos_menu_selector "$@"
+    elif [[ $capabilities == *"cursor_movement"* ]] && [[ $capabilities == *"read_timeout"* ]]; then
+        advanced_menu_selector "$@"
     elif [[ $capabilities == *"interactive"* ]] && command -v clear >/dev/null 2>&1; then
-        # Simple menu with screen clearing (macOS Terminal, basic terminals)
         simple_menu_selector "$@"
     else
-        # Fallback to numbered menu (most compatible)
         numbered_menu_selector "$@"
     fi
 }
 
+
+
 #------------------------------------------------------------------------------
-# Print Functions (color-aware)
+# Print Functions (Enhanced Color-Aware)
 #------------------------------------------------------------------------------
 
 print_header() {
@@ -482,7 +596,7 @@ print_prompt() {
 }
 
 #------------------------------------------------------------------------------
-# Test Function
+# Test Function (Complete)
 #------------------------------------------------------------------------------
 
 test_universal_menu() {
@@ -495,4 +609,29 @@ test_universal_menu() {
     echo
     
     local result
+    menu_selector "Choose your favorite programming language:" result \
+        "Python - Great for data science" \
+        "JavaScript - Web development king" \
+        "Bash - System administration" \
+        "Go - Modern system programming" \
+        "Rust - Memory safe performance" \
+        -- \
+        "python" "js" "bash" "golang" "rust"
     
+    echo "You selected: $result"
+    
+    echo
+    echo "Testing print functions:"
+    print_header "Test Header"
+    print_info "This is an info message"
+    print_success "This is a success message"
+    print_warning "This is a warning message"  
+    print_error "This is an error message"
+    print_guide "This is a guide message"
+    print_prompt "This is a prompt message"
+}
+
+# If script is run directly, run test
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    test_universal_menu
+fi
