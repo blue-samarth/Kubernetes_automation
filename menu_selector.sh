@@ -1,13 +1,14 @@
 #!/bin/bash
 
 #==============================================================================
-# INTERACTIVE MENU SELECTOR
+# INTERACTIVE MENU SELECTOR - macOS Compatible Version
 #==============================================================================
 # An advanced terminal-based menu system with arrow key navigation, 
 # customizable display text, and separate return values.
+# Fixed for macOS compatibility issues.
 #
 # Author: blue-Samarth
-# Version: 1.0
+# Version: 1.1 - macOS Compatible
 # License: MIT
 #==============================================================================
 
@@ -18,7 +19,7 @@
 # display/return value pairs.
 #
 # USAGE:
-#   choose_from_menu_advanced "prompt" variable_name display_options... [-- return_values...]
+#   menu_selector "prompt" variable_name display_options... [-- return_values...]
 #
 # PARAMETERS:
 #   $1 (prompt)       - Text to display above the menu
@@ -36,15 +37,6 @@
 #   0                - Success (item selected)
 #   1                - Error (invalid parameters)
 #   130              - User cancelled (Ctrl+C/q)
-#
-# EXAMPLES:
-#   # Simple menu (display = return values)
-#   choose_from_menu_advanced "Select option:" choice "Option 1" "Option 2" "Option 3"
-#
-#   # Advanced menu (separate display/return)
-#   display=("🍎 Fresh Apple" "🍌 Ripe Banana" "🚪 Exit")
-#   values=("apple" "banana" "exit")
-#   choose_from_menu_advanced "Pick fruit:" result "${display[@]}" -- "${values[@]}"
 #------------------------------------------------------------------------------
 function menu_selector() {
     local -r prompt="$1" outvar="$2"
@@ -52,7 +44,6 @@ function menu_selector() {
     local parsing_display=true
     
     # Parse arguments: display options, then "--", then return values
-    # This allows flexible parameter passing for both display text and return values
     local i=3
     while (( i <= $# )); do
         if [[ "${!i}" == "--" ]]; then
@@ -70,12 +61,11 @@ function menu_selector() {
     done
     
     # If no return values specified, use display options as return values
-    # This provides a simpler interface when display text = return values
     if (( ${#return_values[@]} == 0 )); then
         return_values=("${display_options[@]}")
     fi
     
-    # Validate array lengths match to prevent index out of bounds errors
+    # Validate array lengths match
     if (( ${#display_options[@]} != ${#return_values[@]} )); then
         echo "Error: Mismatched display and return value arrays" >&2
         return 1
@@ -83,7 +73,6 @@ function menu_selector() {
     
     # Initialize navigation variables
     local cur=0 count=${#display_options[@]} index=0
-    local esc=$(echo -en "\e")  # ESC character for detecting arrow keys
     
     # Ensure we have at least one option
     if (( count == 0 )); then
@@ -91,79 +80,146 @@ function menu_selector() {
         return 1
     fi
     
-    # Terminal setup: hide cursor and disable echo
-    # This creates a clean interactive experience
-    tput civis 2>/dev/null          # Hide cursor
-    trap 'tput cnorm 2>/dev/null; stty echo 2>/dev/null' EXIT INT TERM  # Cleanup on exit
-    stty -echo 2>/dev/null          # Disable terminal echo
+    # Check if terminal supports colors
+    local use_colors=false
+    if command -v tput >/dev/null 2>&1 && tput colors >/dev/null 2>&1; then
+        if (( $(tput colors 2>/dev/null || echo 0) >= 8 )); then
+            use_colors=true
+        fi
+    fi
     
-    printf "$prompt\n"
+    # Color definitions - use tput for better compatibility
+    local color_green color_reset cursor_up cursor_clear_line
+    if $use_colors; then
+        color_green=$(tput setaf 2 2>/dev/null)$(tput bold 2>/dev/null)
+        color_reset=$(tput sgr0 2>/dev/null)
+        cursor_up=$(tput cuu1 2>/dev/null)
+        cursor_clear_line=$(tput el 2>/dev/null)
+    else
+        color_green=""
+        color_reset=""
+        cursor_up=""
+        cursor_clear_line=""
+    fi
+    
+    # Terminal setup: hide cursor and disable echo
+    local cursor_hidden=false echo_disabled=false
+    if tput civis >/dev/null 2>&1; then
+        tput civis
+        cursor_hidden=true
+    fi
+    
+    # Set up cleanup trap
+    trap 'cleanup_terminal' EXIT INT TERM
+    
+    cleanup_terminal() {
+        if $cursor_hidden && command -v tput >/dev/null 2>&1; then
+            tput cnorm 2>/dev/null
+        fi
+        if $echo_disabled; then
+            stty echo 2>/dev/null
+        fi
+        trap - EXIT INT TERM
+    }
+    
+    if stty -echo 2>/dev/null; then
+        echo_disabled=true
+    fi
+    
+    printf "%s\n" "$prompt"
     
     # Main interactive loop
     while true; do
-        # Render menu: highlight current selection with green color and '>' indicator
+        # Render menu
         index=0 
         for o in "${display_options[@]}"; do
             if [[ "$index" == "$cur" ]]; then
-                echo -e " >\e[1;32m $o \e[0m"  # Selected: green + bold
+                printf " >%s %s %s\n" "$color_green" "$o" "$color_reset"
             else 
-                echo "   $o"                     # Normal: plain text
+                printf "   %s\n" "$o"
             fi
             (( ++index ))
         done
         
-        # Read single character without requiring Enter
-        read -s -n1 key
+        # Read single character
+        local key
+        if ! read -rsn1 key 2>/dev/null; then
+            # Fallback for systems where read -n1 doesn't work
+            key=$(dd bs=1 count=1 2>/dev/null)
+        fi
         
         # Handle escape sequences (arrow keys)
-        if [[ $key == $esc ]]; then
-            # Read the next 2 characters to get the full escape sequence
-            read -s -n2 -t 0.1 key 2>/dev/null || key=""
-            case "$key" in
-                "[A") # Up arrow: move to previous item (with wraparound)
-                    (( cur-- ))
-                    (( cur < 0 )) && (( cur = count - 1 ))
-                    ;;
-                "[B") # Down arrow: move to next item (with wraparound)
-                    (( cur++ ))
-                    (( cur >= count )) && (( cur = 0 ))
-                    ;;
-            esac
+        if [[ $key == $'\033' ]]; then
+            # Read the bracket
+            local bracket
+            if ! read -rsn1 -t 0.1 bracket 2>/dev/null; then
+                continue
+            fi
+            if [[ $bracket == "[" ]]; then
+                # Read the direction
+                local direction
+                if ! read -rsn1 -t 0.1 direction 2>/dev/null; then
+                    continue
+                fi
+                case "$direction" in
+                    "A") # Up arrow
+                        (( cur-- ))
+                        (( cur < 0 )) && (( cur = count - 1 ))
+                        ;;
+                    "B") # Down arrow
+                        (( cur++ ))
+                        (( cur >= count )) && (( cur = 0 ))
+                        ;;
+                esac
+            fi
         # Handle selection and exit keys
         elif [[ $key == "" ]] || [[ $key == $'\n' ]] || [[ $key == $'\r' ]]; then
             # Enter key: make selection
             break
         elif [[ $key == $'\003' ]] || [[ $key == "q" ]] || [[ $key == "Q" ]]; then
             # Ctrl+C, q, or Q: cancel operation
-            tput cnorm 2>/dev/null
-            stty echo 2>/dev/null
-            trap - EXIT INT TERM
-            echo -en "\e[${count}A"
-            echo -e "\nSelection cancelled" >&2
-            return 130  # Standard exit code for user interruption
+            cleanup_terminal
+            
+            # Clear menu
+            if [[ -n "$cursor_up" ]]; then
+                for (( i=0; i<count; i++ )); do
+                    printf "%s" "$cursor_up"
+                done
+            fi
+            
+            echo "Selection cancelled" >&2
+            return 130
         fi
         
-        # Move cursor back to top of menu for next render
-        echo -en "\e[${count}A"
+        # Move cursor back to top of menu
+        if [[ -n "$cursor_up" ]]; then
+            for (( i=0; i<count; i++ )); do
+                printf "%s" "$cursor_up"
+            done
+        fi
     done
     
-    # Terminal cleanup: restore cursor and echo
-    tput cnorm 2>/dev/null   # Show cursor
-    stty echo 2>/dev/null    # Re-enable echo
-    trap - EXIT INT TERM     # Remove trap handlers
+    # Clean up terminal
+    cleanup_terminal
     
     # Clear the menu from screen
-    echo -en "\e[${count}A"           # Move cursor to top of menu
-    for (( i=0; i<count; i++ )); do
-        echo -e "\e[K"                # Clear each line
-    done
-    echo -en "\e[${count}A"           # Move cursor back to top
+    if [[ -n "$cursor_up" && -n "$cursor_clear_line" ]]; then
+        for (( i=0; i<count; i++ )); do
+            printf "%s" "$cursor_up"
+        done
+        for (( i=0; i<count; i++ )); do
+            printf "%s\n" "$cursor_clear_line"
+        done
+        for (( i=0; i<count; i++ )); do
+            printf "%s" "$cursor_up"
+        done
+    fi
     
     # Set the output variable to the selected return value
-    printf -v "$outvar" "${return_values[$cur]}"
+    printf -v "$outvar" "%s" "${return_values[$cur]}"
     
     # Display confirmation of selection
-    echo "Selected: ${display_options[$cur]} (value: ${return_values[$cur]})"
+    printf "Selected: %s (value: %s)\n" "${display_options[$cur]}" "${return_values[$cur]}"
     
-    return 0  # Success
+    return 0
 }
